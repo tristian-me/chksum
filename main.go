@@ -21,7 +21,7 @@ func main() {
 
 	for _, file := range args {
 		if err := checker.CheckFile(file); err != nil {
-			fmt.Println(os.Stderr, err.Error()+"\n")
+			fmt.Println(err.Error())
 			os.Exit(1)
 		}
 	}
