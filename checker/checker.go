@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
 	"os"
 )
 
@@ -18,82 +17,79 @@ var hashes = []Hash{
 	Sha256,
 	Sha512}
 
-func CheckDir() {
-	entries, _ := os.ReadDir(".")
+var hashFactories = map[Hash]func() hash.Hash{
+	Md5:    md5.New,
+	Sha1:   sha1.New,
+	Sha256: sha256.New,
+	Sha512: sha512.New,
+}
+
+func CheckDir() error {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return err
+	}
 
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 
-		fmt.Printf("Checking: %s\n", entry.Name())
-		for _, hashType := range hashes {
-			getFileEntry(hashType, entry)
+		if err := CheckFile(entry.Name()); err != nil {
+			return err
 		}
 	}
 	fmt.Println("")
+	return nil
 }
 
-func CheckFile(filename string) {
+func CheckFile(filename string) error {
 	fmt.Printf("Checking: %s\n", filename)
 
-	for _, hashType := range hashes {
-		f, err := os.Open(filename)
-		if err != nil {
-			fmt.Printf("Error opening file %s: %s\n", filename, err)
-		}
-
-		defer func(file *os.File) {
-			err := file.Close()
-			if err != nil {
-				fmt.Printf("Unable to open %s", filename)
-			}
-		}(f)
-
-		readChecksum(hashType, f)
-	}
-}
-
-func getFileEntry(hash Hash, entry os.DirEntry) {
-	f, err := os.Open(entry.Name())
-	if f == nil || entry.IsDir() {
-		return
-	}
-
+	f, err := os.Open(filename)
 	if err != nil {
-		fmt.Printf("Unable to open %s", entry.Name())
-		return
+		return fmt.Errorf("error opening file: %s", filename)
 	}
 
-	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
-			fmt.Printf("Unable to close %s", entry.Name())
-		}
-	}(f)
+	defer func() {
+		_ = f.Close()
+	}()
 
-	readChecksum(hash, f)
+	sums, err := computeChecksums(f, hashes)
+	if err != nil {
+		return fmt.Errorf("error computing checksums: %s", filename)
+	}
+
+	for _, ht := range hashes {
+		fmt.Printf("- %-10s %x\n", ht, sums[ht])
+	}
+
+	return nil
 }
 
-func readChecksum(hashType Hash, f *os.File) {
-	var h hash.Hash
+func computeChecksums(r io.Reader, types []Hash) (map[Hash][]byte, error) {
+	hashers := make([]hash.Hash, 0, len(types))
+	writers := make([]io.Writer, 0, len(types))
+	byType := make(map[Hash]hash.Hash, len(types))
 
-	switch hashType {
-	case Md5:
-		h = md5.New()
-	case Sha1:
-		h = sha1.New()
-	case Sha256:
-		h = sha256.New()
-	case Sha512:
-		h = sha512.New()
-	default:
-		log.Fatalf("Unknown hash type: %s", hashType)
+	for _, t := range types {
+		newHash, ok := hashFactories[t]
+		if !ok {
+			return nil, fmt.Errorf("unknown hash type: %s", t)
+		}
+		h := newHash()
+		hashers = append(hashers, h)
+		writers = append(writers, h)
+		byType[t] = h
 	}
 
-	if _, err := io.Copy(h, f); err != nil {
-		log.Fatal(err)
+	if _, err := io.Copy(io.MultiWriter(writers...), r); err != nil {
+		return nil, err
 	}
 
-	fmt.Printf("- %-10s %x\n", hashType, h.Sum(nil))
+	out := make(map[Hash][]byte, len(types))
+	for _, t := range types {
+		out[t] = byType[t].Sum(nil)
+	}
+	return out, nil
 }
