@@ -6,40 +6,55 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"os"
 )
 
-func CheckDir() {
-	items, _ := os.ReadDir(".")
+var hashes = []Hash{
+	Md5,
+	Sha1,
+	Sha256,
+	Sha512}
 
-	for _, item := range items {
-		if item.IsDir() {
+func CheckDir() {
+	entries, _ := os.ReadDir(".")
+
+	for _, entry := range entries {
+		if entry.IsDir() {
 			continue
 		}
-		getFileEntry(item)
+
+		fmt.Printf("Checking: %s\n", entry.Name())
+		for _, hashType := range hashes {
+			getFileEntry(hashType, entry)
+		}
 	}
+	fmt.Println("")
 }
 
 func CheckFile(filename string) {
-	f, err := os.Open(filename)
-	if err != nil {
-		fmt.Printf("Error opening file %s: %s\n", filename, err)
-	}
-
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			fmt.Printf("Unable to open %s", filename)
-		}
-	}(f)
-
 	fmt.Printf("Checking: %s\n", filename)
-	readChecksum(filename, f)
+
+	for _, hashType := range hashes {
+		f, err := os.Open(filename)
+		if err != nil {
+			fmt.Printf("Error opening file %s: %s\n", filename, err)
+		}
+
+		defer func(file *os.File) {
+			err := file.Close()
+			if err != nil {
+				fmt.Printf("Unable to open %s", filename)
+			}
+		}(f)
+
+		readChecksum(hashType, f)
+	}
 }
 
-func getFileEntry(entry os.DirEntry) {
+func getFileEntry(hash Hash, entry os.DirEntry) {
 	f, err := os.Open(entry.Name())
 	if f == nil || entry.IsDir() {
 		return
@@ -57,30 +72,28 @@ func getFileEntry(entry os.DirEntry) {
 		}
 	}(f)
 
-	readChecksum(entry.Name(), f)
+	readChecksum(hash, f)
 }
 
-func readChecksum(filename string, f *os.File) {
-	fmt.Printf("Checking: %s\n", filename)
+func readChecksum(hashType Hash, f *os.File) {
+	var h hash.Hash
 
-	hasherMd5 := md5.New()
-	hasherSha1 := sha1.New()
-	hasherSha256 := sha256.New()
-	hasherSha512 := sha512.New()
-
-	if _, err := io.Copy(hasherMd5, f); err != nil {
-		log.Fatal(err)
-	}
-	if _, err := io.Copy(hasherSha1, f); err != nil {
-		log.Fatal(err)
-	}
-	if _, err := io.Copy(hasherSha256, f); err != nil {
-		log.Fatal(err)
+	switch hashType {
+	case Md5:
+		h = md5.New()
+	case Sha1:
+		h = sha1.New()
+	case Sha256:
+		h = sha256.New()
+	case Sha512:
+		h = sha512.New()
+	default:
+		log.Fatalf("Unknown hash type: %s", hashType)
 	}
 
-	fmt.Printf("- MD5:    %x\n", hasherMd5.Sum(nil))
-	fmt.Printf("- SHA1:   %x\n", hasherSha1.Sum(nil))
-	fmt.Printf("- SHA256: %x\n", hasherSha256.Sum(nil))
-	fmt.Printf("- SHA256: %x\n", hasherSha512.Sum(nil))
-	fmt.Println("")
+	if _, err := io.Copy(h, f); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("- %-10s %x\n", hashType, h.Sum(nil))
 }
